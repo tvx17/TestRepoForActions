@@ -1,0 +1,48 @@
+name: Deploy Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: read
+
+    steps:
+      - name: Repository auschecken
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bearbeitete Issues in Datei schreiben
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "# Release Notes" > RELEASE_NOTES.md
+          gh issue list --state closed --limit 20 --json number,title --template '{{range .}}- [#{{.number}}] {{.title}}{{"\n"}}{{end}}' >> RELEASE_NOTES.md
+
+      - name: Versionsnummer in Datei aktualisieren
+        run: |
+          # Nutzt die fortlaufende Build-Nummer von GitHub Actions (z. B. 1.0.42)
+          echo "1.0.${{ github.run_number }}" > version.txt
+
+      - name: Änderungen zurück ins GitHub-Repo committen
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: Version und Release Notes aktualisiert [skip ci]"
+          file_pattern: "version.txt RELEASE_NOTES.md"
+
+      - name: Geänderte Dateien auf den Server laden (FTP)
+        uses: SamKirsch/ftp-deploy-action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+
+      - name: Skript auf dem Server anstarten (via HTTP-Webhook)
+        run: |
+          curl -s -X POST "https://deine-domain.de/deploy-hook.php?token=${{ secrets.DEPLOY_TOKEN }}"
