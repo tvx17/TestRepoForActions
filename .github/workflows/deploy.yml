@@ -37,7 +37,7 @@ jobs:
           file_pattern: "version.txt RELEASE_NOTES.md"
 
       - name: Geänderte Dateien auf den Server laden (FTP)
-        uses: SamKirsch/ftp-deploy-action@v4.3.5
+        uses: SamKirkland/ftp-deploy-action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
