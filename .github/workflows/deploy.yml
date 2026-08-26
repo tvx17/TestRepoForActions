@@ -36,7 +36,10 @@ jobs:
           
           # Zur Kontrolle im Action-Log ausgeben:
           cat RELEASE_NOTES.md
-
+      - name: Dynamic Config für Server erstellen
+        run: |
+          echo "BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M:%S')" > server-config.txt
+          echo "BUILD_ENV=production" >> server-config.txt
       - name: Versionsnummer in Datei aktualisieren
         run: |
           # Nutzt die fortlaufende Build-Nummer von GitHub Actions (z. B. 1.0.42)
