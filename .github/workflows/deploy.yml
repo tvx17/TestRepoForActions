@@ -23,7 +23,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "# Release Notes" > RELEASE_NOTES.md
-          gh issue list --state closed --limit 20 --json number,title --template '{{range .}}- [#{{.number}}] {{.title}}{{"\n"}}{{end}}' >> RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          
+          # Auslesen der letzten geschlossenen Issues
+          ISSUES=$(gh issue list --state closed --limit 50 --json number,title --template '{{range .}}- [#{{.number}}] {{.title}}{{"\n"}}{{end}}')
+          
+          if [ -z "$ISSUES" ]; then
+            echo "Keine geschlossenen Issues gefunden." >> RELEASE_NOTES.md
+          else
+            echo "$ISSUES" >> RELEASE_NOTES.md
+          fi
+          
+          # Zur Kontrolle im Action-Log ausgeben:
+          cat RELEASE_NOTES.md
 
       - name: Versionsnummer in Datei aktualisieren
         run: |
