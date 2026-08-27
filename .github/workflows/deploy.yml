@@ -19,43 +19,86 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bearbeitete Issues in Datei schreiben
+      - name: Version berechnen und Release-Info als PHP erstellen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "# Release Notes" > RELEASE_NOTES.md
-          echo "" >> RELEASE_NOTES.md
-          
-          # Auslesen der letzten geschlossenen Issues
-          ISSUES=$(gh issue list --state closed --limit 50 --json number,title --template '{{range .}}- [#{{.number}}] {{.title}}{{"\n"}}{{end}}')
-          
-          if [ -z "$ISSUES" ]; then
-            echo "Keine geschlossenen Issues gefunden." >> RELEASE_NOTES.md
+          # 1. Alte Version einlesen
+          if [ -f version.txt ]; then
+            OLD_VERSION=$(cat version.txt)
           else
-            echo "$ISSUES" >> RELEASE_NOTES.md
+            OLD_VERSION="1.0.0"
           fi
           
-          # Zur Kontrolle im Action-Log ausgeben:
-          cat RELEASE_NOTES.md
-      - name: Dynamic Config für Server erstellen
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
+
+          # 2. Issues abrufen
+          FEATURE_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Feature" --limit 50 --json number,title)
+          BUG_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Bug" --limit 50 --json number,title)
+
+          FEATURE_COUNT=$(echo "$FEATURE_JSON" | jq length)
+          BUG_COUNT=$(echo "$BUG_JSON" | jq length)
+
+          # 3. Neue Version berechnen
+          if [ "$FEATURE_COUNT" -gt 0 ]; then
+            MINOR=$((MINOR + 1))
+            PATCH=0
+          elif [ "$BUG_COUNT" -gt 0 ]; then
+            PATCH=$((PATCH + 1))
+          fi
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "$NEW_VERSION" > version.txt
+          
+          # 4. Release Notes als Variable aufbauen
+          RN_CONTENT=""
+          if [ "$FEATURE_COUNT" -gt 0 ]; then
+            RN_CONTENT+="## Features"$'\n'
+            RN_CONTENT+=$(echo "$FEATURE_JSON" | jq -r '.[] | "- [#\(.number)] \(.title)"')
+            RN_CONTENT+=$'\n\n'
+          fi
+          
+          if [ "$BUG_COUNT" -gt 0 ]; then
+            RN_CONTENT+="## Bugs"$'\n'
+            RN_CONTENT+=$(echo "$BUG_JSON" | jq -r '.[] | "- [#\(.number)] \(.title)"')
+            RN_CONTENT+=$'\n'
+          fi
+
+          if [ "$FEATURE_COUNT" -eq 0 ] && [ "$BUG_COUNT" -eq 0 ]; then
+             RN_CONTENT="Keine gelabelten Issues (Feature/Bug) für dieses Release geschlossen."
+          fi
+
+          # 5. PHP-Datei generieren
+          cat <<EOF > release_info.php
+          <?php
+
+          return [
+              'version' => '${NEW_VERSION}',
+              'notes' => <<< 'EOT'
+          ${RN_CONTENT}
+          EOT
+          ];
+          EOF
+          
+          # Zur Kontrolle ausgeben
+          cat release_info.php
+
+      - name: buildDate.php erstellen
         run: |
-          echo "BUILD_DATE=$(date -u +'%Y-%m-%d %H:%M:%S')" > server-config.txt
-          echo "BUILD_ENV=production" >> server-config.txt
-      - name: Sensible Textdatei aus Secret erstellen
+          echo "<?php" > buildDate.php
+          echo "return '$(date -u +'%Y-%m-%d %H:%M:%S')';" >> buildDate.php
+
+      - name: Production .env-Datei erstellen
         env:
           ENV_CONTENT: ${{ secrets.PROD_ENV }}
         run: |
           echo "$ENV_CONTENT" > .env
-      - name: Versionsnummer in Datei aktualisieren
-        run: |
-          # Nutzt die fortlaufende Build-Nummer von GitHub Actions (z. B. 1.0.42)
-          echo "1.0.${{ github.run_number }}" > version.txt
 
       - name: Änderungen zurück ins GitHub-Repo committen
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: Version und Release Notes aktualisiert [skip ci]"
-          file_pattern: "version.txt RELEASE_NOTES.md"
+          file_pattern: "version.txt release_info.php buildDate.php"
 
       - name: Geänderte Dateien auf den Server laden (FTP)
         uses: SamKirkland/ftp-deploy-action@v4.3.5
@@ -64,9 +107,6 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
 
-      - name: Skript auf dem Server anstarten (via HTTP-Webhook)
-        run: |
-          curl -s -X POST "https://deine-domain.de/deploy-hook.php?token=${{ secrets.DEPLOY_TOKEN }}"
       - name: Befehle auf dem Zielserver via SSH ausführen
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -75,16 +115,14 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT || 22 }}
           script: |
-            # In das Webspace-/Projektverzeichnis wechseln
             cd /html/dein-projektordner
             
-            # Composer-Abhängigkeiten ohne Entwickler-Pakete installieren
             composer install --no-dev --optimize-autoloader --no-interaction
-            
-            # Laravel Datenbank-Migrationen ausführen
             php artisan migrate --force
-            
-            # Laravel Cache erneuern
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
+
+      - name: Webhook aufrufen
+        run: |
+          curl -s -X POST "https://deine-domain.de/deploy-hook.php?token=${{ secrets.DEPLOY_TOKEN }}"
