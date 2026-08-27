@@ -67,3 +67,24 @@ jobs:
       - name: Skript auf dem Server anstarten (via HTTP-Webhook)
         run: |
           curl -s -X POST "https://deine-domain.de/deploy-hook.php?token=${{ secrets.DEPLOY_TOKEN }}"
+      - name: Befehle auf dem Zielserver via SSH ausführen
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USERNAME }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || 22 }}
+          script: |
+            # In das Webspace-/Projektverzeichnis wechseln
+            cd /html/dein-projektordner
+            
+            # Composer-Abhängigkeiten ohne Entwickler-Pakete installieren
+            composer install --no-dev --optimize-autoloader --no-interaction
+            
+            # Laravel Datenbank-Migrationen ausführen
+            php artisan migrate --force
+            
+            # Laravel Cache erneuern
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
