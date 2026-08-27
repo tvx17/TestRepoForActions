@@ -49,14 +49,20 @@ jobs:
 
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
           echo "$NEW_VERSION" > version.txt
+
+          echo "<?php" > version.php
+          echo " return '$NEW_VERSION'" >> version.php
           
           # 4. Release Notes als Variable aufbauen
+          RN_CONTENT="return ['features' => [
           RN_CONTENT=""
           if [ "$FEATURE_COUNT" -gt 0 ]; then
             RN_CONTENT+="## Features"$'\n'
+            RN_CONTENT+="''
             RN_CONTENT+=$(echo "$FEATURE_JSON" | jq -r '.[] | "- [#\(.number)] \(.title)"')
             RN_CONTENT+=$'\n\n'
           fi
+          RN_CONTENT+="];"
           
           if [ "$BUG_COUNT" -gt 0 ]; then
             RN_CONTENT+="## Bugs"$'\n'
