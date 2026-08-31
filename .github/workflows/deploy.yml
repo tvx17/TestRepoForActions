@@ -14,32 +14,32 @@ jobs:
       issues: read
 
     steps:
-      - name: Repository auschecken
+      - name: Check out repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Version berechnen und Release-Info als PHP erstellen
+      - name: Calculate new version and write release info
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Alte Version einlesen
-          if [ -f version.txt ]; then
-            OLD_VERSION=$(cat version.txt)
+          # 1. Get old version from version.php
+          if [ -f version.php ]; then
+            OLD_VERSION=$(php -r "echo include 'version.php';" 2>/dev/null || echo "1.0.0")
           else
             OLD_VERSION="1.0.0"
           fi
-          
+
           IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
 
-          # 2. Issues abrufen
+          # 2. Get issues
           FEATURE_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Feature" --limit 50 --json number,title)
           BUG_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Bug" --limit 50 --json number,title)
 
           FEATURE_COUNT=$(echo "$FEATURE_JSON" | jq length)
           BUG_COUNT=$(echo "$BUG_JSON" | jq length)
 
-          # 3. Neue Version berechnen
+          # 3. Calculate new version
           if [ "$FEATURE_COUNT" -gt 0 ]; then
             MINOR=$((MINOR + 1))
             PATCH=0
@@ -48,51 +48,43 @@ jobs:
           fi
 
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
-          echo "$NEW_VERSION" > version.txt
 
-          echo "<?php" > version.php
-          echo " return '$NEW_VERSION'" >> version.php
-          
-          # 4. Release Notes als Variable aufbauen
-          RN_CONTENT="return ['features' => [
-          RN_CONTENT=""
-          if [ "$FEATURE_COUNT" -gt 0 ]; then
-            RN_CONTENT+="## Features"$'\n'
-            RN_CONTENT+="''
-            RN_CONTENT+=$(echo "$FEATURE_JSON" | jq -r '.[] | "- [#\(.number)] \(.title)"')
-            RN_CONTENT+=$'\n\n'
-          fi
-          RN_CONTENT+="];"
-          
-          if [ "$BUG_COUNT" -gt 0 ]; then
-            RN_CONTENT+="## Bugs"$'\n'
-            RN_CONTENT+=$(echo "$BUG_JSON" | jq -r '.[] | "- [#\(.number)] \(.title)"')
-            RN_CONTENT+=$'\n'
-          fi
+          # Update version.php
+          cat <<EOF > version.php
+          <?php
+          return '${NEW_VERSION}';
+          EOF
 
-          if [ "$FEATURE_COUNT" -eq 0 ] && [ "$BUG_COUNT" -eq 0 ]; then
-             RN_CONTENT="Keine gelabelten Issues (Feature/Bug) für dieses Release geschlossen."
-          fi
+          # 4. Features and Bugs as PHP-Array entries (Format: ID => 'Titel')
+          FEATURE_PHP=$(echo "$FEATURE_JSON" | jq -r '.[] | "        \(.number) => '\''\(.title | gsub("\'"; "\\\'"))'\'',"')
+          BUG_PHP=$(echo "$BUG_JSON" | jq -r '.[] | "        \(.number) => '\''\(.title | gsub("\'"; "\\\'"))'\'',"')
 
-          # 5. PHP-Datei generieren
-          cat <<EOF > release_info.php
+          # 5. Generate relase version file
+          RELEASE_FILE="release_${NEW_VERSION}.php"
+
+          cat <<EOF > "$RELEASE_FILE"
           <?php
 
           return [
               'version' => '${NEW_VERSION}',
-              'notes' => <<< 'EOT'
-          ${RN_CONTENT}
-          EOT
+              'features' => [
+          ${FEATURE_PHP}
+              ],
+              'bugs' => [
+          ${BUG_PHP}
+              ],
           ];
           EOF
-          
-          # Zur Kontrolle ausgeben
-          cat release_info.php
+
+          # Get as debug
+          cat "$RELEASE_FILE"
 
       - name: buildDate.php erstellen
         run: |
-          echo "<?php" > buildDate.php
-          echo "return '$(date -u +'%Y-%m-%d %H:%M:%S')';" >> buildDate.php
+          cat <<EOF > buildDate.php
+          <?php
+          return '$(date -u +'%Y-%m-%d %H:%M:%S')';
+          EOF
 
       - name: Production .env-Datei erstellen
         env:
@@ -104,7 +96,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: Version und Release Notes aktualisiert [skip ci]"
-          file_pattern: "version.txt release_info.php buildDate.php"
+          file_pattern: "version.php release_*.php buildDate.php"
 
       - name: Geänderte Dateien auf den Server laden (FTP)
         uses: SamKirkland/ftp-deploy-action@v4.3.5
