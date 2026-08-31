@@ -19,11 +19,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Version berechnen und Release-Info als PHP erstellen
+      - name: Calculate version and create release info as PHP
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Alte Version aus version.php auslesen
+          # 1. Read old version from version.php
           if [ -f version.php ]; then
             OLD_VERSION=$(php -r "echo include 'version.php';" 2>/dev/null || echo "1.0.0")
           else
@@ -32,14 +32,14 @@ jobs:
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
 
-          # 2. Issues abrufen
+          # 2. Fetch issues
           FEATURE_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Feature" --limit 50 --json number,title)
           BUG_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Bug" --limit 50 --json number,title)
 
           FEATURE_COUNT=$(echo "$FEATURE_JSON" | jq length)
           BUG_COUNT=$(echo "$BUG_JSON" | jq length)
 
-          # 3. Neue Version berechnen
+          # 3. Calculate new version
           if [ "$FEATURE_COUNT" -gt 0 ]; then
             MINOR=$((MINOR + 1))
             PATCH=0
@@ -49,13 +49,13 @@ jobs:
 
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
-          # version.php aktualisieren
+          # Update version.php
           cat <<EOF > version.php
           <?php
           return '${NEW_VERSION}';
           EOF
 
-          # 4. Release-Datei dynamisch via PHP generieren (vermeidet Bash-Maskierungsprobleme)
+          # 4. Dynamically generate release file via PHP (avoids Bash escaping issues)
           RELEASE_FILE="release_${NEW_VERSION}.php"
           export FEATURE_JSON BUG_JSON NEW_VERSION RELEASE_FILE
 
@@ -83,36 +83,36 @@ jobs:
           file_put_contents(getenv("RELEASE_FILE"), $content);
           '
 
-          # Zur Kontrolle ausgeben
+          # Output for verification
           cat "$RELEASE_FILE"
 
-      - name: buildDate.php erstellen
+      - name: Create buildDate.php
         run: |
           cat <<EOF > buildDate.php
           <?php
           return '$(date -u +'%Y-%m-%d %H:%M:%S')';
           EOF
 
-      - name: Production .env-Datei erstellen
+      - name: Create production .env file
         env:
           ENV_CONTENT: ${{ secrets.PROD_ENV }}
         run: |
           echo "$ENV_CONTENT" > .env
 
-      - name: Änderungen zurück ins GitHub-Repo committen
+      - name: Commit changes back to GitHub repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "chore: Version und Release Notes aktualisiert [skip ci]"
           file_pattern: "version.php release_*.php buildDate.php"
 
-      - name: Geänderte Dateien auf den Server laden (FTP)
+      - name: Upload changed files to server (FTP)
         uses: SamKirkland/ftp-deploy-action@v4.3.5
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
 
-      - name: Befehle auf dem Zielserver via SSH ausführen
+      - name: Execute commands on target server via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -128,6 +128,6 @@ jobs:
             php artisan route:cache
             php artisan view:cache
 
-      - name: Webhook aufrufen
+      - name: Call webhook
         run: |
           curl -s -X POST "https://deine-domain.de/deploy-hook.php?token=${{ secrets.DEPLOY_TOKEN }}"
