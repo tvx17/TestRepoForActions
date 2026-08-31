@@ -19,11 +19,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Calculate new version and write release info
+      - name: Version berechnen und Release-Info als PHP erstellen
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 1. Get old version from version.php
+          # 1. Alte Version aus version.php auslesen
           if [ -f version.php ]; then
             OLD_VERSION=$(php -r "echo include 'version.php';" 2>/dev/null || echo "1.0.0")
           else
@@ -32,14 +32,14 @@ jobs:
 
           IFS='.' read -r MAJOR MINOR PATCH <<< "$OLD_VERSION"
 
-          # 2. Get issues
+          # 2. Issues abrufen
           FEATURE_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Feature" --limit 50 --json number,title)
           BUG_JSON=$(gh issue list --repo ${{ github.repository }} --state closed --label "Bug" --limit 50 --json number,title)
 
           FEATURE_COUNT=$(echo "$FEATURE_JSON" | jq length)
           BUG_COUNT=$(echo "$BUG_JSON" | jq length)
 
-          # 3. Calculate new version
+          # 3. Neue Version berechnen
           if [ "$FEATURE_COUNT" -gt 0 ]; then
             MINOR=$((MINOR + 1))
             PATCH=0
@@ -49,34 +49,41 @@ jobs:
 
           NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
-          # Update version.php
+          # version.php aktualisieren
           cat <<EOF > version.php
           <?php
           return '${NEW_VERSION}';
           EOF
 
-          # 4. Features and Bugs as PHP-Array entries (Format: ID => 'Titel')
-          FEATURE_PHP=$(echo "$FEATURE_JSON" | jq -r '.[] | "        \(.number) => '\''\(.title | gsub("\'"; "\\\'"))'\'',"')
-          BUG_PHP=$(echo "$BUG_JSON" | jq -r '.[] | "        \(.number) => '\''\(.title | gsub("\'"; "\\\'"))'\'',"')
-
-          # 5. Generate relase version file
+          # 4. Release-Datei dynamisch via PHP generieren (vermeidet Bash-Maskierungsprobleme)
           RELEASE_FILE="release_${NEW_VERSION}.php"
+          export FEATURE_JSON BUG_JSON NEW_VERSION RELEASE_FILE
 
-          cat <<EOF > "$RELEASE_FILE"
-          <?php
+          php -r '
+          $features = json_decode(getenv("FEATURE_JSON"), true) ?? [];
+          $bugs = json_decode(getenv("BUG_JSON"), true) ?? [];
+          $version = getenv("NEW_VERSION");
 
-          return [
-              'version' => '${NEW_VERSION}',
-              'features' => [
-          ${FEATURE_PHP}
-              ],
-              'bugs' => [
-          ${BUG_PHP}
-              ],
+          $formatIssues = function(array $issues): array {
+              $result = [];
+              foreach ($issues as $issue) {
+                  $result[$issue["number"]] = $issue["title"];
+              }
+              return $result;
+          };
+
+          $data = [
+              "version" => $version,
+              "features" => $formatIssues($features),
+              "bugs" => $formatIssues($bugs),
           ];
-          EOF
 
-          # Get as debug
+          $export = var_export($data, true);
+          $content = "<?php\n\nreturn {$export};\n";
+          file_put_contents(getenv("RELEASE_FILE"), $content);
+          '
+
+          # Zur Kontrolle ausgeben
           cat "$RELEASE_FILE"
 
       - name: buildDate.php erstellen
